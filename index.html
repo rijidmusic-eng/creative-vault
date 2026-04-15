@@ -1,0 +1,1848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Creative Vault</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow-x: hidden; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #aaa; }
+    select { -webkit-appearance: none; appearance: none; }
+    textarea { font-family: inherit; }
+    button:hover { opacity: 0.92; }
+    @media (max-width: 640px) {
+      body { font-size: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+
+  <script type="text/babel">
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
+
+// ─── Google Drive Integration ─────────────────────────────────────────
+const GOOGLE_API_KEY_STORAGE = "cv2_google_api_key";
+const DRIVE_FILE_NAME = "creative-vault-data.json";
+const SCOPES = "https://www.googleapis.com/auth/drive.file";
+const DISCOVERY_DOC = "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest";
+
+// ─── Default Data Structure ───────────────────────────────────────────
+const createEmptyData = () => ({
+  entries: [],
+  customTypes: ["Song", "Comedy Bit"],
+  tags: [],
+  deletedImportIds: [],
+  lastUpdated: new Date().toISOString(),
+  version: 2,
+});
+
+const createEntry = (overrides = {}) => ({
+  id: `entry_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+  title: "",
+  type: "Song",
+  stage: "Seed",
+  tags: [],
+  notes: "",
+  summary: "",
+  chatLog: "",
+  chatImportId: null,
+  revisions: [],
+  currentVersion: "",
+  archived: false,
+  lastWorkedOn: null,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+  ...overrides,
+});
+
+const cleanSummary = (s) => {
+  if (!s) return "";
+  return s
+    .replace(/^\*\*Conversation Overview\*\*\s*/i, "")
+    .replace(/\bThe person\b/g, "David")
+    .replace(/\bthe person\b/g, "David")
+    .replace(/\bThe user\b/g, "David")
+    .replace(/\bthe user\b/g, "David");
+};
+
+const STAGES = ["Seed", "Draft", "Rev 1", "Rev 2", "Rev 3", "Rev 4", "Rev 5", "Rev 6", "Rev 7", "Rev 8", "Rev 9", "Rev 10", "Done"];
+
+// ─── Fonts ────────────────────────────────────────────────────────────
+const fontLink = document.createElement("link");
+fontLink.href = "https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Playfair+Display:wght@600;700;800&display=swap";
+fontLink.rel = "stylesheet";
+document.head.appendChild(fontLink);
+
+// ─── Theme ────────────────────────────────────────────────────────────
+const themes = {
+  light: {
+    bg: "#F7F5F0",
+    bgSecondary: "#FFFFFF",
+    bgTertiary: "#EDEAE3",
+    text: "#1A1A1A",
+    textSecondary: "#5A5650",
+    textMuted: "#8C8780",
+    accent: "#C45D3E",
+    accentHover: "#A84D32",
+    accentLight: "#F3E8E4",
+    border: "#DDD9D1",
+    borderLight: "#E8E4DC",
+    shadow: "0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)",
+    shadowHover: "0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04)",
+    shadowModal: "0 20px 60px rgba(0,0,0,0.15), 0 8px 20px rgba(0,0,0,0.1)",
+    tagBg: "#EDEAE3",
+    tagText: "#5A5650",
+    stageSeed: "#E8DFD0",
+    stageDraft: "#D4E4F7",
+    stageRev: "#DDE8D4",
+    stageDone: "#C45D3E",
+    stageDoneText: "#FFFFFF",
+    success: "#4A7C59",
+    warning: "#C49A3E",
+    cardBg: "#FFFFFF",
+  },
+  dark: {
+    bg: "#1A1816",
+    bgSecondary: "#242220",
+    bgTertiary: "#2E2C28",
+    text: "#E8E4DC",
+    textSecondary: "#A8A49C",
+    textMuted: "#706C64",
+    accent: "#D4744E",
+    accentHover: "#E08860",
+    accentLight: "#3A2820",
+    border: "#3A3834",
+    borderLight: "#32302C",
+    shadow: "0 1px 3px rgba(0,0,0,0.2), 0 1px 2px rgba(0,0,0,0.15)",
+    shadowHover: "0 4px 12px rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.2)",
+    shadowModal: "0 20px 60px rgba(0,0,0,0.5), 0 8px 20px rgba(0,0,0,0.3)",
+    tagBg: "#2E2C28",
+    tagText: "#A8A49C",
+    stageSeed: "#3A3428",
+    stageDraft: "#28343E",
+    stageRev: "#2C3828",
+    stageDone: "#D4744E",
+    stageDoneText: "#1A1816",
+    success: "#5A9C69",
+    warning: "#D4AA4E",
+    cardBg: "#242220",
+  },
+};
+
+// ─── Icons (inline SVG components) ────────────────────────────────────
+const Icon = ({ d, size = 18, color = "currentColor", children, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    {Array.isArray(d) ? d.map((p, i) => <path key={i} d={p} />) : <path d={d} />}
+    {children}
+  </svg>
+);
+
+const Icons = {
+  search: (p) => <Icon d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" {...p} />,
+  plus: (p) => <Icon d={["M12 5v14", "M5 12h14"]} {...p} />,
+  grid: (p) => <Icon d={["M3 3h7v7H3z", "M14 3h7v7h-7z", "M14 14h7v7h-7z", "M3 14h7v7H3z"]} {...p} />,
+  list: (p) => <Icon d={["M8 6h13", "M8 12h13", "M8 18h13", "M3 6h.01", "M3 12h.01", "M3 18h.01"]} {...p} />,
+  edit: (p) => <Icon d={["M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7", "M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"]} {...p} />,
+  trash: (p) => <Icon d={["M3 6h18", "M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"]} {...p} />,
+  upload: (p) => <Icon d={["M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4", "M17 8l-5-5-5 5", "M12 3v12"]} {...p} />,
+  download: (p) => <Icon d={["M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4", "M7 10l5 5 5-5", "M12 15V3"]} {...p} />,
+  sun: (p) => <Icon d={["M12 1v2", "M12 21v2", "M4.22 4.22l1.42 1.42", "M18.36 18.36l1.42 1.42", "M1 12h2", "M21 12h2", "M4.22 19.78l1.42-1.42", "M18.36 5.64l1.42-1.42"]} {...p}><circle cx="12" cy="12" r="5" stroke="currentColor" fill="none" /></Icon>,
+  moon: (p) => <Icon d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" {...p} />,
+  x: (p) => <Icon d={["M18 6L6 18", "M6 6l12 12"]} {...p} />,
+  chat: (p) => <Icon d={["M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"]} {...p} />,
+  file: (p) => <Icon d={["M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z", "M14 2v6h6", "M16 13H8", "M16 17H8", "M10 9H8"]} {...p} />,
+  clock: (p) => <Icon d={["M12 6v6l4 2"]} {...p}><circle cx="12" cy="12" r="10" stroke="currentColor" fill="none" /></Icon>,
+  tag: (p) => <Icon d={["M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z", "M7 7h.01"]} {...p} />,
+  save: (p) => <Icon d={["M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z", "M17 21v-8H7v8", "M7 3v5h8"]} {...p} />,
+  cloud: (p) => <Icon d={["M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"]} {...p} />,
+  check: (p) => <Icon d="M20 6L9 17l-5-5" {...p} />,
+  info: (p) => <Icon d={["M12 16v-4", "M12 8h.01"]} {...p}><circle cx="12" cy="12" r="10" stroke="currentColor" fill="none" /></Icon>,
+  chevDown: (p) => <Icon d="M6 9l6 6 6-6" {...p} />,
+  chevRight: (p) => <Icon d="M9 18l6-6-6-6" {...p} />,
+  music: (p) => <Icon d={["M9 18V5l12-2v13"]} {...p}><circle cx="6" cy="18" r="3" stroke="currentColor" fill="none" /><circle cx="18" cy="16" r="3" stroke="currentColor" fill="none" /></Icon>,
+  mic: (p) => <Icon d={["M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z", "M19 10v2a7 7 0 01-14 0v-2", "M12 19v4", "M8 23h8"]} {...p} />,
+  arrow: (p) => <Icon d={["M19 12H5", "M12 19l-7-7 7-7"]} {...p} />,
+  drive: (p) => <Icon d={["M12 2L2 19.5h20L12 2z", "M7.5 12.5h9", "M4.5 17h15"]} {...p} />,
+};
+
+// ─── Claude Export Parser ─────────────────────────────────────────────
+const parseClaudeExport = (jsonData) => {
+  const entries = [];
+  const conversations = Array.isArray(jsonData) ? jsonData : jsonData?.conversations || jsonData?.chat_messages || [];
+
+  for (const conv of conversations) {
+    const id = conv.uuid || conv.id || conv.conversation_id || `import_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const title = conv.name || conv.title || "Untitled Chat";
+    const messages = conv.chat_messages || conv.messages || conv.mapping ? Object.values(conv.mapping || {}).filter(m => m?.message).map(m => m.message) : [];
+
+    let chatLog = "";
+    if (conv.chat_messages) {
+      chatLog = conv.chat_messages
+        .map((m) => {
+          const sender = m.sender === "human" ? "You" : "Claude";
+          const text = typeof m.text === "string" ? m.text : Array.isArray(m.content) ? m.content.map(c => c.text || "").join("") : m.text?.toString() || "";
+          return `**${sender}:**\n${text}`;
+        })
+        .join("\n\n---\n\n");
+    } else if (conv.messages) {
+      chatLog = conv.messages
+        .map((m) => {
+          const sender = m.role === "user" || m.role === "human" ? "You" : "Claude";
+          const text = typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.map(c => c.text || "").join("") : "";
+          return `**${sender}:**\n${text}`;
+        })
+        .join("\n\n---\n\n");
+    }
+
+    const createdAt = conv.created_at || conv.create_time ? new Date(conv.created_at || conv.create_time * 1000).toISOString() : new Date().toISOString();
+    const updatedAt = conv.updated_at || conv.update_time ? new Date(conv.updated_at || conv.update_time * 1000).toISOString() : createdAt;
+    const summary = conv.summary || "";
+
+    entries.push(createEntry({
+      id: `claude_${id}`,
+      title,
+      chatLog,
+      chatImportId: id,
+      createdAt,
+      updatedAt,
+      summary,
+      notes: summary ? "" : `Imported from Claude on ${new Date().toLocaleDateString()}`,
+    }));
+  }
+  return entries;
+};
+
+// ─── Walkthrough Component ────────────────────────────────────────────
+const Walkthrough = ({ theme, onComplete }) => {
+  const [step, setStep] = useState(0);
+  const t = themes[theme];
+
+  const steps = [
+    {
+      title: "Welcome to Creative Vault",
+      body: "This is your personal creative command center. Everything you build here \u2014 songs, comedy bits, ideas \u2014 lives in your Google Drive, accessible from any device. Let\u2019s walk through the basics.",
+      icon: Icons.music,
+    },
+    {
+      title: "Import Your Claude Chats",
+      body: "Go to claude.ai \u2192 Settings \u2192 Privacy \u2192 Export Data. You\u2019ll get an email with a ZIP file containing a JSON file. Upload that JSON here and the app will pull in every conversation. You can re-import later \u2014 it\u2019ll update existing chats and add new ones without duplicating anything.",
+      icon: Icons.upload,
+    },
+    {
+      title: "Organize with Types, Tags & Stages",
+      body: "Each entry gets a type (Song, Comedy Bit, or custom), a stage (Seed \u2192 Draft \u2192 Rev 1\u20262 \u2192 Done), and as many tags as you want. Tags are yours to create \u2014 album names, special names, themes, moods, whatever makes sense to you.",
+      icon: Icons.tag,
+    },
+    {
+      title: "Three Ways to View Each Piece",
+      body: "Full Chat shows the raw conversation with Claude, including the dead ends. Revisions shows clean milestone versions you paste in yourself \u2014 like track changes in Word. Current shows just the latest version, clean and ready.",
+      icon: Icons.file,
+    },
+    {
+      title: "Google Drive Sync",
+      body: "Connect your Google account and your data saves automatically to a file in your Drive. Open the app on your laptop, make changes, sync. Open it on your phone \u2014 same data. You own the file completely.",
+      icon: Icons.drive,
+    },
+    {
+      title: "You\u2019re Ready",
+      body: "Start by creating your first entry or importing your Claude chats. Everything saves to Drive when you hit the sync button. Let\u2019s go.",
+      icon: Icons.check,
+    },
+  ];
+
+  const s = steps[step];
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center",
+      background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", padding: 20,
+    }}>
+      <div style={{
+        background: t.bgSecondary, borderRadius: 16, padding: "40px 36px", maxWidth: 520, width: "100%",
+        boxShadow: t.shadowModal, position: "relative",
+      }}>
+        <div style={{
+          display: "flex", gap: 6, marginBottom: 32, justifyContent: "center",
+        }}>
+          {steps.map((_, i) => (
+            <div key={i} style={{
+              width: i === step ? 28 : 8, height: 8, borderRadius: 4,
+              background: i === step ? t.accent : t.border,
+              transition: "all 0.3s ease",
+            }} />
+          ))}
+        </div>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <div style={{
+            width: 56, height: 56, borderRadius: 14, background: t.accentLight,
+            display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20,
+          }}>
+            {s.icon({ size: 26, color: t.accent })}
+          </div>
+          <h2 style={{
+            fontFamily: "'Playfair Display', serif", fontSize: 24, fontWeight: 700,
+            color: t.text, margin: "0 0 12px",
+          }}>{s.title}</h2>
+          <p style={{
+            fontFamily: "'DM Sans', sans-serif", fontSize: 15, lineHeight: 1.65,
+            color: t.textSecondary, margin: 0,
+          }}>{s.body}</p>
+        </div>
+        <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+          {step > 0 && (
+            <button onClick={() => setStep(step - 1)} style={{
+              fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 500,
+              padding: "10px 24px", borderRadius: 8, border: `1px solid ${t.border}`,
+              background: "transparent", color: t.textSecondary, cursor: "pointer",
+            }}>Back</button>
+          )}
+          <button onClick={() => step < steps.length - 1 ? setStep(step + 1) : onComplete()} style={{
+            fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 600,
+            padding: "10px 28px", borderRadius: 8, border: "none",
+            background: t.accent, color: "#fff", cursor: "pointer",
+          }}>{step < steps.length - 1 ? "Next" : "Get Started"}</button>
+        </div>
+        <button onClick={onComplete} style={{
+          position: "absolute", top: 16, right: 16, background: "none", border: "none",
+          color: t.textMuted, cursor: "pointer", padding: 4,
+        }}>{Icons.x({ size: 18 })}</button>
+      </div>
+    </div>
+  );
+};
+
+// ─── Tag Input Component ──────────────────────────────────────────────
+const TagInput = ({ tags, allTags, onChange, theme }) => {
+  const [input, setInput] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const t = themes[theme];
+
+  const suggestions = allTags.filter(
+    (tag) => tag.toLowerCase().includes(input.toLowerCase()) && !tags.includes(tag)
+  ).slice(0, 5);
+
+  const addTag = (tag) => {
+    const trimmed = tag.trim();
+    if (trimmed && !tags.includes(trimmed)) {
+      onChange([...tags, trimmed]);
+    }
+    setInput("");
+    setShowSuggestions(false);
+  };
+
+  return (
+    <div style={{ position: "relative" }}>
+      <div style={{
+        display: "flex", flexWrap: "wrap", gap: 6, padding: "8px 10px",
+        border: `1px solid ${t.border}`, borderRadius: 8, background: t.bgSecondary,
+        minHeight: 40, alignItems: "center",
+      }}>
+        {tags.map((tag) => (
+          <span key={tag} style={{
+            display: "inline-flex", alignItems: "center", gap: 4,
+            padding: "3px 10px", borderRadius: 6, fontSize: 12, fontWeight: 500,
+            background: t.accentLight, color: t.accent,
+            fontFamily: "'DM Sans', sans-serif",
+          }}>
+            {tag}
+            <span onClick={() => onChange(tags.filter((tt) => tt !== tag))} style={{ cursor: "pointer", opacity: 0.7, marginLeft: 2 }}>&times;</span>
+          </span>
+        ))}
+        <input
+          value={input}
+          onChange={(e) => { setInput(e.target.value); setShowSuggestions(true); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTag(input); }
+            if (e.key === "Backspace" && !input && tags.length) { onChange(tags.slice(0, -1)); }
+          }}
+          onFocus={() => setShowSuggestions(true)}
+          onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+          placeholder={tags.length ? "" : "Add tags..."}
+          style={{
+            border: "none", outline: "none", background: "transparent", flex: 1, minWidth: 80,
+            fontSize: 13, color: t.text, fontFamily: "'DM Sans', sans-serif",
+          }}
+        />
+      </div>
+      {showSuggestions && suggestions.length > 0 && (
+        <div style={{
+          position: "absolute", top: "100%", left: 0, right: 0, zIndex: 10,
+          background: t.bgSecondary, border: `1px solid ${t.border}`, borderRadius: 8,
+          marginTop: 4, boxShadow: t.shadow, overflow: "hidden",
+        }}>
+          {suggestions.map((s) => (
+            <div key={s} onMouseDown={() => addTag(s)} style={{
+              padding: "8px 12px", fontSize: 13, color: t.text, cursor: "pointer",
+              fontFamily: "'DM Sans', sans-serif",
+            }}>{s}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Stage Picker ─────────────────────────────────────────────────────
+const StagePicker = ({ value, onChange, theme }) => {
+  const t = themes[theme];
+  const getStageStyle = (stage) => {
+    if (stage === "Done") return { bg: t.stageDone, color: t.stageDoneText };
+    if (stage === "Seed") return { bg: t.stageSeed, color: t.text };
+    if (stage === "Draft") return { bg: t.stageDraft, color: t.text };
+    return { bg: t.stageRev, color: t.text };
+  };
+
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+      {STAGES.map((stage) => {
+        const s = getStageStyle(stage);
+        const active = value === stage;
+        return (
+          <button key={stage} onClick={() => onChange(stage)} style={{
+            padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: active ? 600 : 400,
+            fontFamily: "'DM Sans', sans-serif", border: active ? `2px solid ${t.accent}` : `1px solid ${t.borderLight}`,
+            background: active ? s.bg : "transparent", color: active ? s.color : t.textMuted,
+            cursor: "pointer", transition: "all 0.15s ease",
+          }}>{stage}</button>
+        );
+      })}
+    </div>
+  );
+};
+
+// ─── Entry Detail Modal ───────────────────────────────────────────────
+const EntryDetail = ({ entry, allTags, onSave, onDelete, onClose, theme }) => {
+  const [data, setData] = useState({ ...entry });
+  const [activeTab, setActiveTab] = useState("current");
+  const [newRevision, setNewRevision] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const t = themes[theme];
+
+  const update = (field, value) => setData({ ...data, [field]: value, updatedAt: new Date().toISOString() });
+
+  const addRevision = () => {
+    if (!newRevision.trim()) return;
+    const revNum = data.revisions.length + 1;
+    update("revisions", [...data.revisions, {
+      id: `rev_${Date.now()}`,
+      number: revNum,
+      content: newRevision.trim(),
+      createdAt: new Date().toISOString(),
+    }]);
+    setNewRevision("");
+  };
+
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "stretch", justifyContent: "center",
+      background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)",
+    }}>
+      <div style={{
+        background: t.bg, width: "100%", maxWidth: 860, overflowY: "auto",
+        boxShadow: t.shadowModal, display: "flex", flexDirection: "column",
+        borderRadius: isMobile ? 0 : 12, margin: isMobile ? 0 : "20px 16px",
+      }}>
+        {/* Header */}
+        <div style={{
+          padding: "20px 24px 16px", borderBottom: `1px solid ${t.border}`,
+          display: "flex", alignItems: "flex-start", gap: 12, position: "sticky", top: 0,
+          background: t.bg, zIndex: 2,
+        }}>
+          <button onClick={onClose} style={{
+            background: "none", border: "none", color: t.textMuted, cursor: "pointer",
+            padding: 4, marginTop: 4, flexShrink: 0,
+          }}>{Icons.arrow({ size: 20 })}</button>
+          <div style={{ flex: 1 }}>
+            <input
+              value={data.title}
+              onChange={(e) => update("title", e.target.value)}
+              placeholder="Title..."
+              style={{
+                width: "100%", border: "none", outline: "none", background: "transparent",
+                fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 700,
+                color: t.text, padding: 0,
+              }}
+            />
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10, alignItems: "center" }}>
+              <select value={data.type} onChange={(e) => update("type", e.target.value)} style={{
+                fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600,
+                padding: "4px 8px", borderRadius: 6, border: `1px solid ${t.border}`,
+                background: t.bgTertiary, color: t.text, cursor: "pointer",
+              }}>
+                {["Song", "Comedy Bit"].map((tp) => <option key={tp} value={tp}>{tp}</option>)}
+              </select>
+              <StagePicker value={data.stage} onChange={(s) => update("stage", s)} theme={theme} />
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+            <button onClick={() => { onSave(data); onClose(); }} style={{
+              fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600,
+              padding: "8px 16px", borderRadius: 8, border: "none",
+              background: t.accent, color: "#fff", cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 6,
+            }}>{Icons.save({ size: 14 })} Save</button>
+          </div>
+        </div>
+
+        {/* Tags */}
+        <div style={{ padding: "12px 24px 0" }}>
+          <label style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 6 }}>Tags</label>
+          <TagInput tags={data.tags} allTags={allTags} onChange={(tags) => update("tags", tags)} theme={theme} />
+        </div>
+
+        {/* Summary */}
+        {data.summary && (
+          <div style={{ padding: "12px 24px 0" }}>
+            <label style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 6 }}>Claude's Summary</label>
+            <div style={{
+              padding: "10px 14px", borderRadius: 8, background: t.bgTertiary,
+              fontFamily: "'DM Sans', sans-serif", fontSize: 13, lineHeight: 1.6,
+              color: t.textSecondary, whiteSpace: "pre-wrap",
+            }}>{cleanSummary(data.summary)}</div>
+          </div>
+        )}
+
+        {/* Notes */}
+        <div style={{ padding: "12px 24px 0" }}>
+          <label style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 6 }}>Notes</label>
+          <textarea
+            value={data.notes}
+            onChange={(e) => update("notes", e.target.value)}
+            placeholder="Quick notes about this piece..."
+            rows={3}
+            style={{
+              width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`,
+              background: t.bgSecondary, color: t.text, fontFamily: "'DM Sans', sans-serif", fontSize: 14,
+              lineHeight: 1.6, resize: "vertical", outline: "none", boxSizing: "border-box",
+            }}
+          />
+        </div>
+
+        {/* Tabs */}
+        <div style={{
+          display: "flex", gap: 0, padding: "16px 24px 0", borderBottom: `1px solid ${t.border}`,
+        }}>
+          {[
+            { id: "current", label: "Current", icon: Icons.file },
+            { id: "revisions", label: "Revisions", icon: Icons.clock },
+            { id: "chat", label: "Full Chat", icon: Icons.chat },
+          ].map((tab) => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
+              fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: activeTab === tab.id ? 600 : 400,
+              padding: "10px 16px", border: "none", background: "transparent", cursor: "pointer",
+              color: activeTab === tab.id ? t.accent : t.textMuted,
+              borderBottom: activeTab === tab.id ? `2px solid ${t.accent}` : "2px solid transparent",
+              display: "flex", alignItems: "center", gap: 6, transition: "all 0.15s ease",
+            }}>
+              {tab.icon({ size: 14 })} {tab.label}
+              {tab.id === "revisions" && data.revisions.length > 0 && (
+                <span style={{
+                  fontSize: 10, fontWeight: 700, background: t.accentLight, color: t.accent,
+                  padding: "1px 6px", borderRadius: 10,
+                }}>{data.revisions.length}</span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab Content */}
+        <div style={{ flex: 1, padding: "16px 24px 24px", overflowY: "auto" }}>
+          {activeTab === "current" && (
+            <div>
+              <textarea
+                value={data.currentVersion}
+                onChange={(e) => update("currentVersion", e.target.value)}
+                placeholder="Paste or write the current version of your piece here..."
+                rows={16}
+                style={{
+                  width: "100%", padding: "14px 16px", borderRadius: 8, border: `1px solid ${t.border}`,
+                  background: t.bgSecondary, color: t.text, fontFamily: "'DM Sans', sans-serif", fontSize: 14,
+                  lineHeight: 1.8, resize: "vertical", outline: "none", boxSizing: "border-box",
+                }}
+              />
+            </div>
+          )}
+
+          {activeTab === "revisions" && (
+            <div>
+              <div style={{ marginBottom: 20 }}>
+                <textarea
+                  value={newRevision}
+                  onChange={(e) => setNewRevision(e.target.value)}
+                  placeholder="Paste a clean milestone version here to add it to the timeline..."
+                  rows={8}
+                  style={{
+                    width: "100%", padding: "14px 16px", borderRadius: 8, border: `1px solid ${t.border}`,
+                    background: t.bgSecondary, color: t.text, fontFamily: "'DM Sans', sans-serif", fontSize: 14,
+                    lineHeight: 1.8, resize: "vertical", outline: "none", marginBottom: 8, boxSizing: "border-box",
+                  }}
+                />
+                <button onClick={addRevision} disabled={!newRevision.trim()} style={{
+                  fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600,
+                  padding: "8px 16px", borderRadius: 8, border: "none",
+                  background: newRevision.trim() ? t.accent : t.border,
+                  color: newRevision.trim() ? "#fff" : t.textMuted, cursor: newRevision.trim() ? "pointer" : "default",
+                }}>Add as Rev {data.revisions.length + 1}</button>
+              </div>
+
+              {data.revisions.length === 0 ? (
+                <div style={{
+                  textAlign: "center", padding: "40px 20px", color: t.textMuted,
+                  fontFamily: "'DM Sans', sans-serif", fontSize: 14,
+                }}>
+                  No revisions yet. Paste a clean version above to start tracking your evolution.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {[...data.revisions].reverse().map((rev) => (
+                    <div key={rev.id} style={{
+                      padding: "16px", borderRadius: 10, border: `1px solid ${t.borderLight}`,
+                      background: t.bgSecondary,
+                    }}>
+                      <div style={{
+                        display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10,
+                      }}>
+                        <span style={{
+                          fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700,
+                          color: t.accent, textTransform: "uppercase", letterSpacing: "0.05em",
+                        }}>Rev {rev.number}</span>
+                        <span style={{
+                          fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: t.textMuted,
+                        }}>{new Date(rev.createdAt).toLocaleDateString()}</span>
+                      </div>
+                      <pre style={{
+                        fontFamily: "'DM Sans', sans-serif", fontSize: 13, lineHeight: 1.7,
+                        color: t.text, whiteSpace: "pre-wrap", margin: 0,
+                      }}>{rev.content}</pre>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === "chat" && (
+            <div>
+              {data.chatLog ? (
+                <div style={{
+                  padding: "16px", borderRadius: 10, border: `1px solid ${t.borderLight}`,
+                  background: t.bgSecondary, maxHeight: 500, overflowY: "auto",
+                }}>
+                  <pre style={{
+                    fontFamily: "'DM Sans', sans-serif", fontSize: 13, lineHeight: 1.7,
+                    color: t.text, whiteSpace: "pre-wrap", margin: 0,
+                  }}>{data.chatLog}</pre>
+                </div>
+              ) : (
+                <div style={{
+                  textAlign: "center", padding: "40px 20px", color: t.textMuted,
+                  fontFamily: "'DM Sans', sans-serif", fontSize: 14,
+                }}>
+                  No chat log. Import your Claude export to populate this, or paste a conversation manually.
+                  <textarea
+                    value={data.chatLog}
+                    onChange={(e) => update("chatLog", e.target.value)}
+                    placeholder="Paste conversation here..."
+                    rows={10}
+                    style={{
+                      width: "100%", marginTop: 16, padding: "14px 16px", borderRadius: 8,
+                      border: `1px solid ${t.border}`, background: t.bg, color: t.text,
+                      fontFamily: "'DM Sans', sans-serif", fontSize: 14, lineHeight: 1.8,
+                      resize: "vertical", outline: "none", boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          padding: "12px 24px", borderTop: `1px solid ${t.border}`, display: "flex",
+          justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8,
+        }}>
+          <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: t.textMuted }}>
+            Updated {new Date(data.updatedAt).toLocaleDateString()}
+            {data.lastWorkedOn && <> &middot; Last worked on {new Date(data.lastWorkedOn).toLocaleDateString()}</>}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button onClick={() => { update("archived", !data.archived); }} style={{
+              fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: t.textMuted,
+              background: "none", border: "none", cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 4,
+            }}>{data.archived ? Icons.upload({ size: 13 }) : Icons.download({ size: 13 })} {data.archived ? "Unarchive" : "Archive"}</button>
+            {!confirmDelete ? (
+              <button onClick={() => setConfirmDelete(true)} style={{
+                fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: t.textMuted,
+                background: "none", border: "none", cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 4,
+              }}>{Icons.trash({ size: 13 })} Delete</button>
+            ) : (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: t.warning }}>Are you sure?</span>
+                <button onClick={() => { onDelete(entry.id); onClose(); }} style={{
+                  fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600,
+                  padding: "4px 12px", borderRadius: 6, border: "none",
+                  background: "#C44", color: "#fff", cursor: "pointer",
+                }}>Yes, delete</button>
+                <button onClick={() => setConfirmDelete(false)} style={{
+                  fontFamily: "'DM Sans', sans-serif", fontSize: 12, padding: "4px 12px",
+                  borderRadius: 6, border: `1px solid ${t.border}`, background: "transparent",
+                  color: t.textSecondary, cursor: "pointer",
+                }}>Cancel</button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Entry Card ───────────────────────────────────────────────────────
+const EntryCard = ({ entry, onClick, viewMode, theme, batchMode, isSelected, onToggleSelect }) => {
+  const t = themes[theme];
+  const getStageColor = (stage) => {
+    if (stage === "Done") return { bg: t.stageDone, color: t.stageDoneText };
+    if (stage === "Seed") return { bg: t.stageSeed, color: t.text };
+    if (stage === "Draft") return { bg: t.stageDraft, color: t.text };
+    return { bg: t.stageRev, color: t.text };
+  };
+  const sc = getStageColor(entry.stage);
+  const isGrid = viewMode === "grid";
+  const typeIcon = entry.type === "Comedy Bit" ? Icons.mic : Icons.music;
+
+  return (
+    <div onClick={() => batchMode ? onToggleSelect(entry.id) : onClick()} style={{
+      background: isSelected ? t.accentLight : t.cardBg, borderRadius: 12,
+      border: isSelected ? `2px solid ${t.accent}` : `1px solid ${t.borderLight}`,
+      padding: isGrid ? "18px" : "14px 18px", cursor: "pointer",
+      boxShadow: t.shadow, transition: "all 0.2s ease",
+      display: isGrid ? "flex" : "flex", flexDirection: isGrid ? "column" : "row",
+      gap: isGrid ? 10 : 14, alignItems: isGrid ? "stretch" : "center",
+    }}
+      onMouseEnter={(e) => { if (!isSelected) { e.currentTarget.style.boxShadow = t.shadowHover; e.currentTarget.style.borderColor = t.accent + "40"; } }}
+      onMouseLeave={(e) => { if (!isSelected) { e.currentTarget.style.boxShadow = t.shadow; e.currentTarget.style.borderColor = t.borderLight; } }}
+    >
+      {batchMode && (
+        <div style={{
+          width: 20, height: 20, borderRadius: 4, flexShrink: 0,
+          border: isSelected ? `2px solid ${t.accent}` : `2px solid ${t.border}`,
+          background: isSelected ? t.accent : "transparent",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          alignSelf: "center",
+        }}>
+          {isSelected && Icons.check({ size: 13, color: "#fff" })}
+        </div>
+      )}
+      <div style={{
+        width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+        background: t.accentLight, display: "flex", alignItems: "center", justifyContent: "center",
+        overflow: "visible",
+      }}>
+        {typeIcon({ size: 18, color: t.accent })}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontFamily: "'Playfair Display', serif", fontSize: 15, fontWeight: 700,
+          color: t.text, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}>{entry.title || "Untitled"}</div>
+        {entry.summary && (
+          <div style={{
+            fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: t.textSecondary,
+            marginBottom: 6, lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis",
+            display: "-webkit-box", WebkitLineClamp: isGrid ? 2 : 1, WebkitBoxOrient: "vertical",
+          }}>{cleanSummary(entry.summary).slice(0, 200)}</div>
+        )}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+          <span style={{
+            padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600,
+            background: sc.bg, color: sc.color, fontFamily: "'DM Sans', sans-serif",
+          }}>{entry.stage}</span>
+          {entry.tags.slice(0, isGrid ? 2 : 4).map((tag) => (
+            <span key={tag} style={{
+              padding: "2px 7px", borderRadius: 5, fontSize: 10, fontWeight: 500,
+              background: t.tagBg, color: t.tagText, fontFamily: "'DM Sans', sans-serif",
+            }}>{tag}</span>
+          ))}
+          {entry.tags.length > (isGrid ? 2 : 4) && (
+            <span style={{ fontSize: 10, color: t.textMuted, fontFamily: "'DM Sans', sans-serif" }}>
+              +{entry.tags.length - (isGrid ? 2 : 4)}
+            </span>
+          )}
+        </div>
+      </div>
+      {entry.revisions.length > 0 && (
+        <div style={{
+          fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: t.textMuted,
+          display: "flex", alignItems: "center", gap: 3, flexShrink: 0,
+        }}>
+          {Icons.clock({ size: 11 })} {entry.revisions.length} rev{entry.revisions.length > 1 ? "s" : ""}
+        </div>
+      )}
+      {entry.lastWorkedOn && (
+        <div style={{
+          fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: t.textMuted,
+          display: "flex", alignItems: "center", gap: 3, flexShrink: 0,
+        }}>
+          {Icons.edit({ size: 11 })} {new Date(entry.lastWorkedOn).toLocaleDateString()}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Import Modal ─────────────────────────────────────────────────────
+const ImportModal = ({ onImport, onClose, theme }) => {
+  const [status, setStatus] = useState("idle");
+  const [preview, setPreview] = useState(null);
+  const fileRef = useRef();
+  const t = themes[theme];
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setStatus("parsing");
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text);
+      const entries = parseClaudeExport(json);
+      setPreview(entries);
+      setStatus("preview");
+    } catch (err) {
+      setStatus("error");
+    }
+  };
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
+      background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", padding: 20,
+    }}>
+      <div style={{
+        background: t.bgSecondary, borderRadius: 16, padding: "32px", maxWidth: 520, width: "100%",
+        boxShadow: t.shadowModal,
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <h2 style={{
+            fontFamily: "'Playfair Display', serif", fontSize: 20, fontWeight: 700,
+            color: t.text, margin: 0,
+          }}>Import Claude Chats</h2>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: t.textMuted, cursor: "pointer" }}>
+            {Icons.x({ size: 18 })}
+          </button>
+        </div>
+
+        {status === "idle" && (
+          <div>
+            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: t.textSecondary, lineHeight: 1.6, marginBottom: 16 }}>
+              Upload the JSON file from your Claude data export. Go to claude.ai &rarr; Settings &rarr; Privacy &rarr; Export Data, then extract the ZIP and find the conversations JSON file inside.
+            </p>
+            <input ref={fileRef} type="file" accept=".json" onChange={handleFile} style={{ display: "none" }} />
+            <button onClick={() => fileRef.current?.click()} style={{
+              width: "100%", padding: "16px", borderRadius: 10, border: `2px dashed ${t.border}`,
+              background: t.bg, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+              fontSize: 14, fontWeight: 500, color: t.textSecondary,
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            }}>
+              {Icons.upload({ size: 18 })} Choose JSON file
+            </button>
+          </div>
+        )}
+
+        {status === "parsing" && (
+          <div style={{ textAlign: "center", padding: 30, color: t.textSecondary, fontFamily: "'DM Sans', sans-serif" }}>
+            Parsing your conversations...
+          </div>
+        )}
+
+        {status === "error" && (
+          <div>
+            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: "#C44", marginBottom: 16 }}>
+              Couldn't parse that file. Make sure it's the JSON file from your Claude export (not the ZIP itself).
+            </p>
+            <button onClick={() => { setStatus("idle"); setPreview(null); }} style={{
+              fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600,
+              padding: "8px 16px", borderRadius: 8, border: `1px solid ${t.border}`,
+              background: "transparent", color: t.text, cursor: "pointer",
+            }}>Try Again</button>
+          </div>
+        )}
+
+        {status === "preview" && preview && (
+          <div>
+            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: t.textSecondary, marginBottom: 12 }}>
+              Found <strong>{preview.length}</strong> conversation{preview.length !== 1 ? "s" : ""}. Existing entries will be updated, new ones added.
+            </p>
+            <div style={{
+              maxHeight: 200, overflowY: "auto", marginBottom: 16, borderRadius: 8,
+              border: `1px solid ${t.border}`, background: t.bg,
+            }}>
+              {preview.slice(0, 20).map((e) => (
+                <div key={e.id} style={{
+                  padding: "8px 12px", borderBottom: `1px solid ${t.borderLight}`,
+                  fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: t.text,
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>{e.title}</div>
+              ))}
+              {preview.length > 20 && (
+                <div style={{ padding: "8px 12px", fontSize: 12, color: t.textMuted, fontFamily: "'DM Sans', sans-serif" }}>
+                  ...and {preview.length - 20} more
+                </div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => { onImport(preview); onClose(); }} style={{
+                fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600,
+                padding: "10px 20px", borderRadius: 8, border: "none",
+                background: t.accent, color: "#fff", cursor: "pointer",
+              }}>Import {preview.length} conversation{preview.length !== 1 ? "s" : ""}</button>
+              <button onClick={onClose} style={{
+                fontFamily: "'DM Sans', sans-serif", fontSize: 13, padding: "10px 20px",
+                borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent",
+                color: t.textSecondary, cursor: "pointer",
+              }}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ─── Drive Setup Modal ────────────────────────────────────────────────
+const DriveSetup = ({ onComplete, theme }) => {
+  const [clientId, setClientId] = useState("");
+  const [step, setStep] = useState(0);
+  const t = themes[theme];
+
+  const steps = [
+    {
+      title: "Set Up Google Drive Sync",
+      body: (
+        <div>
+          <p style={{ marginBottom: 12 }}>To sync across devices, you need a free Google API client ID. Here's how:</p>
+          <ol style={{ paddingLeft: 20, lineHeight: 2, fontSize: 13 }}>
+            <li>Go to <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" style={{ color: t.accent }}>console.cloud.google.com</a></li>
+            <li>Create a new project (name it anything, e.g. "Creative Vault")</li>
+            <li>Enable the <strong>Google Drive API</strong></li>
+            <li>Go to Credentials &rarr; Create Credentials &rarr; OAuth Client ID</li>
+            <li>Application type: <strong>Web application</strong></li>
+            <li>Add <strong>https://rijidmusic-eng.github.io</strong> as an authorized JavaScript origin</li>
+            <li>Copy the Client ID and paste it below</li>
+          </ol>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center",
+      background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", padding: 20,
+    }}>
+      <div style={{
+        background: t.bgSecondary, borderRadius: 16, padding: "32px", maxWidth: 540, width: "100%",
+        boxShadow: t.shadowModal,
+      }}>
+        <h2 style={{
+          fontFamily: "'Playfair Display', serif", fontSize: 20, fontWeight: 700,
+          color: t.text, margin: "0 0 16px",
+        }}>{steps[step].title}</h2>
+        <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: t.textSecondary, lineHeight: 1.6 }}>
+          {steps[step].body}
+        </div>
+        <input
+          value={clientId}
+          onChange={(e) => setClientId(e.target.value)}
+          placeholder="Paste your Google Client ID here..."
+          style={{
+            width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${t.border}`,
+            background: t.bg, color: t.text, fontFamily: "'DM Sans', sans-serif", fontSize: 13,
+            outline: "none", marginTop: 16, boxSizing: "border-box",
+          }}
+        />
+        <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+          <button onClick={() => clientId.trim() && onComplete(clientId.trim())} disabled={!clientId.trim()} style={{
+            fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600,
+            padding: "10px 20px", borderRadius: 8, border: "none",
+            background: clientId.trim() ? t.accent : t.border,
+            color: clientId.trim() ? "#fff" : t.textMuted,
+            cursor: clientId.trim() ? "pointer" : "default",
+          }}>Connect to Drive</button>
+          <button onClick={() => onComplete(null)} style={{
+            fontFamily: "'DM Sans', sans-serif", fontSize: 13, padding: "10px 20px",
+            borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent",
+            color: t.textSecondary, cursor: "pointer",
+          }}>Skip for now (local only)</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Main App ─────────────────────────────────────────────────────────
+function CreativeVault() {
+  const [data, setData] = useState(createEmptyData());
+  const [theme, setTheme] = useState("light");
+  const [viewMode, setViewMode] = useState("list");
+  const [search, setSearch] = useState("");
+  const [filterType, setFilterType] = useState("All");
+  const [filterStage, setFilterStage] = useState("All");
+  const [filterTag, setFilterTag] = useState("All");
+  const [selectedEntry, setSelectedEntry] = useState(null);
+  const [showImport, setShowImport] = useState(false);
+  const [showWalkthrough, setShowWalkthrough] = useState(true);
+  const [showDriveSetup, setShowDriveSetup] = useState(false);
+  const [driveStatus, setDriveStatus] = useState("disconnected");
+  const [syncMessage, setSyncMessage] = useState("");
+  const [driveClientId, setDriveClientId] = useState(null);
+  const [driveFileId, setDriveFileId] = useState(null);
+  const [gapiReady, setGapiReady] = useState(false);
+  const [sortBy, setSortBy] = useState("updated");
+  const [batchMode, setBatchMode] = useState(false);
+  const [selected, setSelected] = useState(new Set());
+  const [showBatchTags, setShowBatchTags] = useState(false);
+  const [batchTagInput, setBatchTagInput] = useState("");
+  const [confirmBatchDelete, setConfirmBatchDelete] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+
+  const t = themes[theme];
+
+  // Load settings from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("cv2_settings");
+      if (saved) {
+        const s = JSON.parse(saved);
+        if (s.theme) setTheme(s.theme);
+        if (s.viewMode) setViewMode(s.viewMode);
+        if (s.walkthroughDone) setShowWalkthrough(false);
+        if (s.driveClientId) { setDriveClientId(s.driveClientId); setShowDriveSetup(false); }
+        if (s.driveFileId) setDriveFileId(s.driveFileId);
+      }
+
+      // Load data from localStorage as fallback
+      const localData = localStorage.getItem("cv2_data");
+      if (localData) {
+        setData(JSON.parse(localData));
+      }
+    } catch (e) { /* fresh start */ }
+  }, []);
+
+  // Save settings
+  const saveSettings = useCallback((overrides = {}) => {
+    try {
+      const current = JSON.parse(localStorage.getItem("cv2_settings") || "{}");
+      localStorage.setItem("cv2_settings", JSON.stringify({ ...current, ...overrides }));
+    } catch (e) {}
+  }, []);
+
+  // Save data locally
+  useEffect(() => {
+    try { localStorage.setItem("cv2_data", JSON.stringify(data)); } catch (e) {}
+  }, [data]);
+
+  // Google Drive: load GAPI
+  useEffect(() => {
+    if (!driveClientId) return;
+    const script = document.createElement("script");
+    script.src = "https://apis.google.com/js/api.js";
+    script.onload = () => {
+      window.gapi.load("client:auth2", async () => {
+        try {
+          await window.gapi.client.init({
+            clientId: driveClientId,
+            scope: SCOPES,
+            discoveryDocs: [DISCOVERY_DOC],
+          });
+          setGapiReady(true);
+          const authInstance = window.gapi.auth2.getAuthInstance();
+          if (authInstance.isSignedIn.get()) {
+            setDriveStatus("connected");
+          }
+        } catch (e) {
+          console.error("GAPI init error", e);
+        }
+      });
+    };
+    document.body.appendChild(script);
+  }, [driveClientId]);
+
+  const driveSignIn = async () => {
+    if (!gapiReady) return;
+    try {
+      const authInstance = window.gapi.auth2.getAuthInstance();
+      await authInstance.signIn();
+      setDriveStatus("connected");
+      setSyncMessage("Connected to Google Drive");
+      setTimeout(() => setSyncMessage(""), 2000);
+    } catch (e) {
+      console.error("Sign-in error", e);
+    }
+  };
+
+  const findOrCreateDriveFile = async () => {
+    if (driveFileId) return driveFileId;
+    // Search for existing file
+    const resp = await window.gapi.client.drive.files.list({
+      q: `name='${DRIVE_FILE_NAME}' and trashed=false`,
+      spaces: "drive",
+      fields: "files(id, name)",
+    });
+    if (resp.result.files?.length > 0) {
+      const id = resp.result.files[0].id;
+      setDriveFileId(id);
+      saveSettings({ driveFileId: id });
+      return id;
+    }
+    // Create new
+    const createResp = await window.gapi.client.drive.files.create({
+      resource: { name: DRIVE_FILE_NAME, mimeType: "application/json" },
+      fields: "id",
+    });
+    const id = createResp.result.id;
+    setDriveFileId(id);
+    saveSettings({ driveFileId: id });
+    return id;
+  };
+
+  const syncToDrive = async () => {
+    if (driveStatus !== "connected") return;
+    setSyncMessage("Saving to Drive...");
+    try {
+      const fileId = await findOrCreateDriveFile();
+      const boundary = "cv2boundary";
+      const body = [
+        `--${boundary}`,
+        "Content-Type: application/json; charset=UTF-8",
+        "",
+        JSON.stringify({ name: DRIVE_FILE_NAME }),
+        `--${boundary}`,
+        "Content-Type: application/json",
+        "",
+        JSON.stringify(data),
+        `--${boundary}--`,
+      ].join("\r\n");
+
+      await window.gapi.client.request({
+        path: `/upload/drive/v3/files/${fileId}`,
+        method: "PATCH",
+        params: { uploadType: "multipart" },
+        headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
+        body,
+      });
+      setSyncMessage("Saved to Drive");
+      setTimeout(() => setSyncMessage(""), 2000);
+    } catch (e) {
+      console.error("Sync error", e);
+      setSyncMessage("Sync failed");
+      setTimeout(() => setSyncMessage(""), 3000);
+    }
+  };
+
+  const loadFromDrive = async () => {
+    if (driveStatus !== "connected") return;
+    setSyncMessage("Loading from Drive...");
+    try {
+      const fileId = await findOrCreateDriveFile();
+      const resp = await window.gapi.client.drive.files.get({
+        fileId,
+        alt: "media",
+      });
+      if (resp.result?.entries) {
+        setData(resp.result);
+        setSyncMessage("Loaded from Drive");
+      } else {
+        setSyncMessage("No data found in Drive — using local");
+      }
+      setTimeout(() => setSyncMessage(""), 2000);
+    } catch (e) {
+      console.error("Load error", e);
+      setSyncMessage("Load failed");
+      setTimeout(() => setSyncMessage(""), 3000);
+    }
+  };
+
+  // All tags across all entries
+  const allTags = useMemo(() => {
+    const tagSet = new Set();
+    data.entries.forEach((e) => e.tags.forEach((tag) => tagSet.add(tag)));
+    return [...tagSet].sort();
+  }, [data.entries]);
+
+  // All types
+  const allTypes = useMemo(() => {
+    const typeSet = new Set(["All", ...data.customTypes]);
+    data.entries.forEach((e) => typeSet.add(e.type));
+    return [...typeSet];
+  }, [data.entries, data.customTypes]);
+
+  // Filtered and sorted entries
+  const filtered = useMemo(() => {
+    let entries = data.entries;
+    // Filter archived
+    entries = entries.filter((e) => showArchived ? (e.archived === true) : (!e.archived));
+    if (search) {
+      const q = search.toLowerCase();
+      entries = entries.filter((e) =>
+        e.title.toLowerCase().includes(q) ||
+        e.notes.toLowerCase().includes(q) ||
+        e.summary.toLowerCase().includes(q) ||
+        e.tags.some((tag) => tag.toLowerCase().includes(q)) ||
+        e.currentVersion.toLowerCase().includes(q)
+      );
+    }
+    if (filterType !== "All") entries = entries.filter((e) => e.type === filterType);
+    if (filterStage !== "All") entries = entries.filter((e) => e.stage === filterStage);
+    if (filterTag !== "All") entries = entries.filter((e) => e.tags.includes(filterTag));
+
+    entries = [...entries].sort((a, b) => {
+      if (sortBy === "updated") return new Date(b.updatedAt) - new Date(a.updatedAt);
+      if (sortBy === "worked") return (new Date(b.lastWorkedOn || 0)) - (new Date(a.lastWorkedOn || 0));
+      if (sortBy === "title") return a.title.localeCompare(b.title);
+      if (sortBy === "stage") return STAGES.indexOf(a.stage) - STAGES.indexOf(b.stage);
+      return 0;
+    });
+    return entries;
+  }, [data.entries, search, filterType, filterStage, filterTag, sortBy, showArchived]);
+
+  // Handlers
+  const handleImport = (importedEntries) => {
+    setData((prev) => {
+      const updated = { ...prev, lastUpdated: new Date().toISOString() };
+      const existing = new Map(prev.entries.map((e) => [e.chatImportId, e]));
+      const tombstones = new Set(prev.deletedImportIds || []);
+
+      for (const imp of importedEntries) {
+        // Skip previously deleted conversations
+        if (tombstones.has(imp.chatImportId)) continue;
+
+        const existingEntry = existing.get(imp.chatImportId);
+        if (existingEntry) {
+          // Merge: keep user's tags, stage, notes, revisions; update chat log
+          const idx = updated.entries.findIndex((e) => e.id === existingEntry.id);
+          if (idx >= 0) {
+            updated.entries = [...updated.entries];
+            updated.entries[idx] = {
+              ...existingEntry,
+              chatLog: imp.chatLog,
+              summary: imp.summary || existingEntry.summary,
+              updatedAt: imp.updatedAt,
+            };
+          }
+        } else {
+          updated.entries = [...updated.entries, imp];
+        }
+      }
+      return updated;
+    });
+  };
+
+  const handleSaveEntry = (updatedEntry) => {
+    setData((prev) => {
+      const idx = prev.entries.findIndex((e) => e.id === updatedEntry.id);
+      const entries = [...prev.entries];
+      const stamped = { ...updatedEntry, lastWorkedOn: new Date().toISOString() };
+      if (idx >= 0) {
+        entries[idx] = stamped;
+      } else {
+        entries.push(stamped);
+      }
+      return { ...prev, entries, lastUpdated: new Date().toISOString() };
+    });
+  };
+
+  const handleDeleteEntry = (id) => {
+    setData((prev) => {
+      const entry = prev.entries.find((e) => e.id === id);
+      const newDeletedIds = [...(prev.deletedImportIds || [])];
+      if (entry?.chatImportId) newDeletedIds.push(entry.chatImportId);
+      return {
+        ...prev,
+        entries: prev.entries.filter((e) => e.id !== id),
+        deletedImportIds: newDeletedIds,
+        lastUpdated: new Date().toISOString(),
+      };
+    });
+  };
+
+  const handleNewEntry = () => {
+    const entry = createEntry({ title: "New Idea" });
+    setData((prev) => ({ ...prev, entries: [entry, ...prev.entries] }));
+    setSelectedEntry(entry);
+  };
+
+  const handleExportBackup = () => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `creative-vault-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportBackup = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed.entries) {
+          setData(parsed);
+          setSyncMessage("Backup restored");
+          setTimeout(() => setSyncMessage(""), 2000);
+        }
+      } catch (err) { setSyncMessage("Invalid backup file"); setTimeout(() => setSyncMessage(""), 2000); }
+    };
+    input.click();
+  };
+
+  // Batch operations
+  const toggleSelect = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllVisible = () => {
+    if (selected.size === filtered.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(filtered.map((e) => e.id)));
+    }
+  };
+
+  const batchSetType = (type) => {
+    setData((prev) => ({
+      ...prev,
+      entries: prev.entries.map((e) =>
+        selected.has(e.id) ? { ...e, type, updatedAt: new Date().toISOString() } : e
+      ),
+      lastUpdated: new Date().toISOString(),
+    }));
+  };
+
+  const batchSetStage = (stage) => {
+    setData((prev) => ({
+      ...prev,
+      entries: prev.entries.map((e) =>
+        selected.has(e.id) ? { ...e, stage, updatedAt: new Date().toISOString() } : e
+      ),
+      lastUpdated: new Date().toISOString(),
+    }));
+  };
+
+  const batchAddTag = (tag) => {
+    const trimmed = tag.trim();
+    if (!trimmed) return;
+    setData((prev) => ({
+      ...prev,
+      entries: prev.entries.map((e) =>
+        selected.has(e.id) && !e.tags.includes(trimmed)
+          ? { ...e, tags: [...e.tags, trimmed], updatedAt: new Date().toISOString() }
+          : e
+      ),
+      lastUpdated: new Date().toISOString(),
+    }));
+    setBatchTagInput("");
+    setShowBatchTags(false);
+  };
+
+  const batchDelete = () => {
+    setData((prev) => {
+      const newDeletedIds = [...(prev.deletedImportIds || [])];
+      prev.entries.forEach((e) => {
+        if (selected.has(e.id) && e.chatImportId) newDeletedIds.push(e.chatImportId);
+      });
+      return {
+        ...prev,
+        entries: prev.entries.filter((e) => !selected.has(e.id)),
+        deletedImportIds: newDeletedIds,
+        lastUpdated: new Date().toISOString(),
+      };
+    });
+    setSelected(new Set());
+    setConfirmBatchDelete(false);
+  };
+
+  const exitBatchMode = () => {
+    setBatchMode(false);
+    setSelected(new Set());
+    setConfirmBatchDelete(false);
+    setShowBatchTags(false);
+  };
+
+  const batchArchive = () => {
+    setData((prev) => ({
+      ...prev,
+      entries: prev.entries.map((e) =>
+        selected.has(e.id) ? { ...e, archived: true, updatedAt: new Date().toISOString() } : e
+      ),
+      lastUpdated: new Date().toISOString(),
+    }));
+    setSelected(new Set());
+  };
+
+  const batchUnarchive = () => {
+    setData((prev) => ({
+      ...prev,
+      entries: prev.entries.map((e) =>
+        selected.has(e.id) ? { ...e, archived: false, updatedAt: new Date().toISOString() } : e
+      ),
+      lastUpdated: new Date().toISOString(),
+    }));
+    setSelected(new Set());
+  };
+
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
+
+  // Stats
+  const stats = useMemo(() => ({
+    total: data.entries.filter((e) => !e.archived).length,
+    songs: data.entries.filter((e) => e.type === "Song" && !e.archived).length,
+    comedy: data.entries.filter((e) => e.type === "Comedy Bit" && !e.archived).length,
+    done: data.entries.filter((e) => e.stage === "Done" && !e.archived).length,
+    seeds: data.entries.filter((e) => e.stage === "Seed" && !e.archived).length,
+    archived: data.entries.filter((e) => e.archived).length,
+  }), [data.entries]);
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: t.bg, color: t.text,
+      fontFamily: "'DM Sans', sans-serif", transition: "background 0.3s ease, color 0.3s ease",
+    }}>
+      {showWalkthrough && (
+        <Walkthrough theme={theme} onComplete={() => {
+          setShowWalkthrough(false);
+          saveSettings({ walkthroughDone: true });
+          if (!driveClientId) setShowDriveSetup(true);
+        }} />
+      )}
+
+      {showDriveSetup && (
+        <DriveSetup theme={theme} onComplete={(id) => {
+          setShowDriveSetup(false);
+          if (id) {
+            setDriveClientId(id);
+            saveSettings({ driveClientId: id });
+          }
+        }} />
+      )}
+
+      {showImport && <ImportModal onImport={handleImport} onClose={() => setShowImport(false)} theme={theme} />}
+
+      {selectedEntry && (
+        <EntryDetail
+          entry={selectedEntry}
+          allTags={allTags}
+          onSave={handleSaveEntry}
+          onDelete={handleDeleteEntry}
+          onClose={() => setSelectedEntry(null)}
+          theme={theme}
+        />
+      )}
+
+      {/* Header */}
+      <header style={{
+        padding: isMobile ? "16px 16px 12px" : "20px 28px 16px",
+        borderBottom: `1px solid ${t.border}`,
+        background: t.bgSecondary,
+      }}>
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14,
+          flexWrap: "wrap", gap: 10,
+        }}>
+          <div>
+            <h1 style={{
+              fontFamily: "'Playfair Display', serif", fontSize: isMobile ? 24 : 28,
+              fontWeight: 800, margin: 0, color: t.text,
+            }}>Creative Vault</h1>
+            <p style={{ fontSize: 12, color: t.textMuted, margin: "2px 0 0" }}>
+              {stats.total} entries &middot; {stats.songs} songs &middot; {stats.comedy} bits &middot; {stats.done} done
+              {stats.archived > 0 && <> &middot; {stats.archived} archived</>}
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            {syncMessage && (
+              <span style={{
+                fontSize: 11, color: t.success, fontWeight: 500,
+                display: "flex", alignItems: "center", gap: 4,
+              }}>{Icons.check({ size: 13, color: t.success })} {syncMessage}</span>
+            )}
+            {driveStatus === "connected" ? (
+              <button onClick={syncToDrive} title="Save to Drive" style={{
+                padding: "7px 12px", borderRadius: 8, border: `1px solid ${t.border}`,
+                background: "transparent", cursor: "pointer", color: t.success,
+                display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 500,
+              }}>{Icons.cloud({ size: 15 })} Sync</button>
+            ) : driveClientId ? (
+              <button onClick={driveSignIn} style={{
+                padding: "7px 12px", borderRadius: 8, border: `1px solid ${t.border}`,
+                background: "transparent", cursor: "pointer", color: t.textSecondary,
+                display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 500,
+              }}>{Icons.drive({ size: 15 })} Sign In</button>
+            ) : (
+              <button onClick={() => setShowDriveSetup(true)} style={{
+                padding: "7px 12px", borderRadius: 8, border: `1px solid ${t.border}`,
+                background: "transparent", cursor: "pointer", color: t.textSecondary,
+                display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 500,
+              }}>{Icons.drive({ size: 15 })} Setup Drive</button>
+            )}
+            <button onClick={() => { const newTheme = theme === "light" ? "dark" : "light"; setTheme(newTheme); saveSettings({ theme: newTheme }); }} style={{
+              padding: 7, borderRadius: 8, border: `1px solid ${t.border}`,
+              background: "transparent", cursor: "pointer", color: t.textSecondary,
+              display: "flex", alignItems: "center",
+            }}>{theme === "light" ? Icons.moon({ size: 15 }) : Icons.sun({ size: 15 })}</button>
+          </div>
+        </div>
+
+        {/* Actions bar */}
+        <div style={{
+          display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center",
+        }}>
+          <button onClick={handleNewEntry} style={{
+            padding: "8px 14px", borderRadius: 8, border: "none",
+            background: t.accent, color: "#fff", cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600,
+          }}>{Icons.plus({ size: 15 })} New Entry</button>
+          <button onClick={() => setShowImport(true)} style={{
+            padding: "8px 14px", borderRadius: 8, border: `1px solid ${t.border}`,
+            background: "transparent", color: t.text, cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 500,
+          }}>{Icons.upload({ size: 15 })} Import Chats</button>
+          <button onClick={handleExportBackup} style={{
+            padding: "8px 14px", borderRadius: 8, border: `1px solid ${t.border}`,
+            background: "transparent", color: t.textSecondary, cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 500,
+          }}>{Icons.download({ size: 14 })} Backup</button>
+          <button onClick={handleImportBackup} style={{
+            padding: "8px 14px", borderRadius: 8, border: `1px solid ${t.border}`,
+            background: "transparent", color: t.textSecondary, cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 500,
+          }}>{Icons.upload({ size: 14 })} Restore</button>
+          {data.entries.length > 0 && (
+            <button onClick={() => batchMode ? exitBatchMode() : setBatchMode(true)} style={{
+              padding: "8px 14px", borderRadius: 8,
+              border: batchMode ? `2px solid ${t.accent}` : `1px solid ${t.border}`,
+              background: batchMode ? t.accentLight : "transparent",
+              color: batchMode ? t.accent : t.textSecondary, cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: batchMode ? 600 : 500,
+            }}>{Icons.check({ size: 14 })} {batchMode ? "Exit Select" : "Select"}</button>
+          )}
+          {driveStatus === "connected" && (
+            <button onClick={loadFromDrive} style={{
+              padding: "8px 14px", borderRadius: 8, border: `1px solid ${t.border}`,
+              background: "transparent", color: t.textSecondary, cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 500,
+            }}>{Icons.download({ size: 14 })} Load from Drive</button>
+          )}
+        </div>
+      </header>
+
+      {/* Filters */}
+      <div style={{
+        padding: isMobile ? "12px 16px" : "14px 28px",
+        borderBottom: `1px solid ${t.border}`, background: t.bgSecondary,
+        display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center",
+      }}>
+        <div style={{
+          flex: 1, minWidth: 180, display: "flex", alignItems: "center", gap: 8,
+          padding: "8px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.bg,
+        }}>
+          {Icons.search({ size: 15, color: t.textMuted })}
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search titles, notes, tags, content..."
+            style={{
+              border: "none", outline: "none", background: "transparent", flex: 1,
+              fontSize: 13, color: t.text, fontFamily: "'DM Sans', sans-serif",
+            }}
+          />
+          {search && (
+            <button onClick={() => setSearch("")} style={{ background: "none", border: "none", cursor: "pointer", color: t.textMuted, padding: 0 }}>
+              {Icons.x({ size: 14 })}
+            </button>
+          )}
+        </div>
+
+        <select value={filterType} onChange={(e) => setFilterType(e.target.value)} style={{
+          fontSize: 12, padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`,
+          background: t.bg, color: t.text, fontFamily: "'DM Sans', sans-serif", cursor: "pointer",
+        }}>
+          {allTypes.map((tp) => <option key={tp} value={tp}>{tp}</option>)}
+        </select>
+
+        <select value={filterStage} onChange={(e) => setFilterStage(e.target.value)} style={{
+          fontSize: 12, padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`,
+          background: t.bg, color: t.text, fontFamily: "'DM Sans', sans-serif", cursor: "pointer",
+        }}>
+          <option value="All">All Stages</option>
+          {STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+
+        {allTags.length > 0 && (
+          <select value={filterTag} onChange={(e) => setFilterTag(e.target.value)} style={{
+            fontSize: 12, padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`,
+            background: t.bg, color: t.text, fontFamily: "'DM Sans', sans-serif", cursor: "pointer",
+          }}>
+            <option value="All">All Tags</option>
+            {allTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+          </select>
+        )}
+
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={{
+          fontSize: 12, padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`,
+          background: t.bg, color: t.text, fontFamily: "'DM Sans', sans-serif", cursor: "pointer",
+        }}>
+          <option value="updated">Last Updated</option>
+          <option value="worked">Last Worked On</option>
+          <option value="title">Title A-Z</option>
+          <option value="stage">Stage</option>
+        </select>
+
+        {(stats.archived > 0 || showArchived) && (
+          <button onClick={() => setShowArchived(!showArchived)} style={{
+            fontSize: 12, padding: "8px 10px", borderRadius: 8,
+            border: showArchived ? `2px solid ${t.accent}` : `1px solid ${t.border}`,
+            background: showArchived ? t.accentLight : "transparent",
+            color: showArchived ? t.accent : t.textSecondary,
+            fontFamily: "'DM Sans', sans-serif", cursor: "pointer", fontWeight: showArchived ? 600 : 400,
+          }}>{showArchived ? "Back to Vault" : `Archive (${stats.archived})`}</button>
+        )}
+
+        <div style={{ display: "flex", gap: 2, marginLeft: "auto" }}>
+          <button onClick={() => { setViewMode("grid"); saveSettings({ viewMode: "grid" }); }} style={{
+            padding: 7, borderRadius: "8px 0 0 8px", border: `1px solid ${t.border}`,
+            background: viewMode === "grid" ? t.bgTertiary : "transparent",
+            color: viewMode === "grid" ? t.text : t.textMuted, cursor: "pointer",
+          }}>{Icons.grid({ size: 15 })}</button>
+          <button onClick={() => { setViewMode("list"); saveSettings({ viewMode: "list" }); }} style={{
+            padding: 7, borderRadius: "0 8px 8px 0", border: `1px solid ${t.border}`, borderLeft: "none",
+            background: viewMode === "list" ? t.bgTertiary : "transparent",
+            color: viewMode === "list" ? t.text : t.textMuted, cursor: "pointer",
+          }}>{Icons.list({ size: 15 })}</button>
+        </div>
+      </div>
+
+      {/* Content */}
+      <main style={{
+        padding: isMobile ? "16px" : "20px 28px",
+        maxWidth: 1200, margin: "0 auto",
+      }}>
+        {/* Batch Action Bar */}
+        {batchMode && (
+          <div style={{
+            padding: "12px 16px", borderRadius: 10, marginBottom: 16,
+            background: t.bgSecondary, border: `1px solid ${t.accent}40`,
+            display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center",
+          }}>
+            <button onClick={selectAllVisible} style={{
+              padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600,
+              border: `1px solid ${t.border}`, background: selected.size === filtered.length && filtered.length > 0 ? t.accentLight : "transparent",
+              color: t.text, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+            }}>{selected.size === filtered.length && filtered.length > 0 ? "Deselect All" : "Select All"}</button>
+
+            <span style={{ fontSize: 12, color: t.textMuted, fontWeight: 500, fontFamily: "'DM Sans', sans-serif" }}>
+              {selected.size} selected
+            </span>
+
+            <div style={{ width: 1, height: 20, background: t.border, margin: "0 4px" }} />
+
+            {selected.size > 0 && (
+              <>
+                <select onChange={(e) => { if (e.target.value) { batchSetType(e.target.value); e.target.value = ""; } }} defaultValue="" style={{
+                  fontSize: 12, padding: "6px 8px", borderRadius: 6, border: `1px solid ${t.border}`,
+                  background: t.bg, color: t.text, fontFamily: "'DM Sans', sans-serif", cursor: "pointer",
+                }}>
+                  <option value="" disabled>Set Type...</option>
+                  <option value="Song">Song</option>
+                  <option value="Comedy Bit">Comedy Bit</option>
+                </select>
+
+                <select onChange={(e) => { if (e.target.value) { batchSetStage(e.target.value); e.target.value = ""; } }} defaultValue="" style={{
+                  fontSize: 12, padding: "6px 8px", borderRadius: 6, border: `1px solid ${t.border}`,
+                  background: t.bg, color: t.text, fontFamily: "'DM Sans', sans-serif", cursor: "pointer",
+                }}>
+                  <option value="" disabled>Set Stage...</option>
+                  {STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+
+                <div style={{ position: "relative" }}>
+                  <button onClick={() => setShowBatchTags(!showBatchTags)} style={{
+                    padding: "6px 10px", borderRadius: 6, fontSize: 12, fontWeight: 500,
+                    border: `1px solid ${t.border}`, background: showBatchTags ? t.accentLight : "transparent",
+                    color: t.text, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                    display: "flex", alignItems: "center", gap: 4,
+                  }}>{Icons.tag({ size: 12 })} Add Tag</button>
+                  {showBatchTags && (
+                    <div style={{
+                      position: "absolute", top: "100%", left: 0, zIndex: 20, marginTop: 4,
+                      background: t.bgSecondary, border: `1px solid ${t.border}`, borderRadius: 8,
+                      padding: 8, boxShadow: t.shadowHover, minWidth: 200,
+                    }}>
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <input
+                          value={batchTagInput}
+                          onChange={(e) => setBatchTagInput(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") batchAddTag(batchTagInput); }}
+                          placeholder="Type tag name..."
+                          autoFocus
+                          style={{
+                            flex: 1, padding: "6px 8px", borderRadius: 6, border: `1px solid ${t.border}`,
+                            background: t.bg, color: t.text, fontFamily: "'DM Sans', sans-serif", fontSize: 12, outline: "none",
+                          }}
+                        />
+                        <button onClick={() => batchAddTag(batchTagInput)} style={{
+                          padding: "6px 10px", borderRadius: 6, border: "none", fontSize: 11, fontWeight: 600,
+                          background: t.accent, color: "#fff", cursor: "pointer",
+                        }}>Add</button>
+                      </div>
+                      {allTags.length > 0 && (
+                        <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 3 }}>
+                          {allTags.slice(0, 10).map((tag) => (
+                            <button key={tag} onClick={() => batchAddTag(tag)} style={{
+                              padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 500, cursor: "pointer",
+                              background: t.tagBg, color: t.tagText, border: "none", fontFamily: "'DM Sans', sans-serif",
+                            }}>{tag}</button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ marginLeft: "auto" }} />
+
+                {!showArchived ? (
+                  <button onClick={batchArchive} style={{
+                    padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500,
+                    border: `1px solid ${t.border}`, background: "transparent",
+                    color: t.textSecondary, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                    display: "flex", alignItems: "center", gap: 4,
+                  }}>{Icons.download({ size: 12 })} Archive {selected.size}</button>
+                ) : (
+                  <button onClick={batchUnarchive} style={{
+                    padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500,
+                    border: `1px solid ${t.accent}40`, background: "transparent",
+                    color: t.accent, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                    display: "flex", alignItems: "center", gap: 4,
+                  }}>{Icons.upload({ size: 12 })} Unarchive {selected.size}</button>
+                )}
+
+                {!confirmBatchDelete ? (
+                  <button onClick={() => setConfirmBatchDelete(true)} style={{
+                    padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500,
+                    border: `1px solid #C4444440`, background: "transparent",
+                    color: "#C44", cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                    display: "flex", alignItems: "center", gap: 4,
+                  }}>{Icons.trash({ size: 12 })} Delete {selected.size}</button>
+                ) : (
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <span style={{ fontSize: 11, color: "#C44", fontFamily: "'DM Sans', sans-serif" }}>Delete {selected.size} entries?</span>
+                    <button onClick={batchDelete} style={{
+                      padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600,
+                      border: "none", background: "#C44", color: "#fff", cursor: "pointer",
+                    }}>Yes</button>
+                    <button onClick={() => setConfirmBatchDelete(false)} style={{
+                      padding: "6px 10px", borderRadius: 6, fontSize: 11,
+                      border: `1px solid ${t.border}`, background: "transparent",
+                      color: t.textSecondary, cursor: "pointer",
+                    }}>No</button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {filtered.length === 0 ? (
+          <div style={{
+            textAlign: "center", padding: "60px 20px",
+          }}>
+            {data.entries.length === 0 ? (
+              <>
+                <div style={{
+                  width: 64, height: 64, borderRadius: 16, background: t.accentLight,
+                  display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 16,
+                }}>{Icons.music({ size: 28, color: t.accent })}</div>
+                <h3 style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, fontWeight: 700, color: t.text, margin: "0 0 8px" }}>
+                  Your Vault is Empty
+                </h3>
+                <p style={{ fontSize: 14, color: t.textSecondary, maxWidth: 360, margin: "0 auto 20px", lineHeight: 1.6 }}>
+                  Create your first entry or import your Claude chat export to get started.
+                </p>
+                <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+                  <button onClick={handleNewEntry} style={{
+                    padding: "10px 20px", borderRadius: 8, border: "none",
+                    background: t.accent, color: "#fff", cursor: "pointer",
+                    fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 6,
+                  }}>{Icons.plus({ size: 16 })} New Entry</button>
+                  <button onClick={() => setShowImport(true)} style={{
+                    padding: "10px 20px", borderRadius: 8, border: `1px solid ${t.border}`,
+                    background: "transparent", color: t.text, cursor: "pointer",
+                    fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", gap: 6,
+                  }}>{Icons.upload({ size: 16 })} Import Chats</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3 style={{ fontFamily: "'Playfair Display', serif", fontSize: 18, color: t.text, margin: "0 0 8px" }}>No matches</h3>
+                <p style={{ fontSize: 14, color: t.textSecondary }}>Try adjusting your filters or search.</p>
+              </>
+            )}
+          </div>
+        ) : (
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: viewMode === "grid"
+              ? `repeat(auto-fill, minmax(${isMobile ? "100%" : "280px"}, 1fr))`
+              : "1fr",
+            gap: viewMode === "grid" ? 12 : 8,
+          }}>
+            {filtered.map((entry) => (
+              <EntryCard
+                key={entry.id}
+                entry={entry}
+                onClick={() => setSelectedEntry(entry)}
+                viewMode={viewMode}
+                theme={theme}
+                batchMode={batchMode}
+                isSelected={selected.has(entry.id)}
+                onToggleSelect={toggleSelect}
+              />
+            ))}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<CreativeVault />);
+  </script>
+</body>
+</html>
