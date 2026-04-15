@@ -1056,42 +1056,53 @@ function CreativeVault() {
     try { localStorage.setItem("cv2_data", JSON.stringify(data)); } catch (e) {}
   }, [data]);
 
-  // Google Drive: load GAPI
+  // Google Drive: load GIS + GAPI
+  const tokenClientRef = useRef(null);
+  const accessTokenRef = useRef(null);
+
   useEffect(() => {
     if (!driveClientId) return;
-    const script = document.createElement("script");
-    script.src = "https://apis.google.com/js/api.js";
-    script.onload = () => {
-      window.gapi.load("client:auth2", async () => {
+
+    // Load GAPI for Drive API calls
+    const gapiScript = document.createElement("script");
+    gapiScript.src = "https://apis.google.com/js/api.js";
+    gapiScript.onload = () => {
+      window.gapi.load("client", async () => {
         try {
-          await window.gapi.client.init({
-            clientId: driveClientId,
-            scope: SCOPES,
-            discoveryDocs: [DISCOVERY_DOC],
-          });
+          await window.gapi.client.init({});
+          await window.gapi.client.load("drive", "v3");
           setGapiReady(true);
-          const authInstance = window.gapi.auth2.getAuthInstance();
-          if (authInstance.isSignedIn.get()) {
-            setDriveStatus("connected");
-          }
         } catch (e) {
-          console.error("GAPI init error", e);
+          console.error("GAPI client init error", e);
         }
       });
     };
-    document.body.appendChild(script);
+    document.body.appendChild(gapiScript);
+
+    // Load GIS for OAuth
+    const gisScript = document.createElement("script");
+    gisScript.src = "https://accounts.google.com/gsi/client";
+    gisScript.onload = () => {
+      tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
+        client_id: driveClientId,
+        scope: SCOPES,
+        callback: (response) => {
+          if (response.access_token) {
+            accessTokenRef.current = response.access_token;
+            window.gapi.client.setToken({ access_token: response.access_token });
+            setDriveStatus("connected");
+            setSyncMessage("Connected to Google Drive");
+            setTimeout(() => setSyncMessage(""), 2000);
+          }
+        },
+      });
+    };
+    document.body.appendChild(gisScript);
   }, [driveClientId]);
 
-  const driveSignIn = async () => {
-    if (!gapiReady) return;
-    try {
-      const authInstance = window.gapi.auth2.getAuthInstance();
-      await authInstance.signIn();
-      setDriveStatus("connected");
-      setSyncMessage("Connected to Google Drive");
-      setTimeout(() => setSyncMessage(""), 2000);
-    } catch (e) {
-      console.error("Sign-in error", e);
+  const driveSignIn = () => {
+    if (tokenClientRef.current) {
+      tokenClientRef.current.requestAccessToken();
     }
   };
 
