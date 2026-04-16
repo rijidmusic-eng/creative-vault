@@ -501,34 +501,6 @@ const EntryDetail = ({ entry, allTags, onSave, onDelete, onClose, theme }) => {
           <TagInput tags={data.tags} allTags={allTags} onChange={(tags) => update("tags", tags)} theme={theme} />
         </div>
 
-        {/* Summary */}
-        {data.summary && (
-          <div style={{ padding: "12px 24px 0" }}>
-            <label style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 6 }}>Claude's Summary</label>
-            <div style={{
-              padding: "10px 14px", borderRadius: 8, background: t.bgTertiary,
-              fontFamily: "'DM Sans', sans-serif", fontSize: 13, lineHeight: 1.6,
-              color: t.textSecondary, whiteSpace: "pre-wrap",
-            }}>{cleanSummary(data.summary)}</div>
-          </div>
-        )}
-
-        {/* Notes */}
-        <div style={{ padding: "12px 24px 0" }}>
-          <label style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 6 }}>Notes</label>
-          <textarea
-            value={data.notes}
-            onChange={(e) => update("notes", e.target.value)}
-            placeholder="Quick notes about this piece..."
-            rows={3}
-            style={{
-              width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`,
-              background: t.bgSecondary, color: t.text, fontFamily: "'DM Sans', sans-serif", fontSize: 14,
-              lineHeight: 1.6, resize: "vertical", outline: "none", boxSizing: "border-box",
-            }}
-          />
-        </div>
-
         {/* Tabs */}
         <div style={{
           display: "flex", gap: 0, padding: "16px 24px 0", borderBottom: `1px solid ${t.border}`,
@@ -667,6 +639,36 @@ const EntryDetail = ({ entry, allTags, onSave, onDelete, onClose, theme }) => {
             </div>
           )}
         </div>
+
+        {/* Notes */}
+        <div style={{ padding: "12px 24px 0" }}>
+          <label style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 6 }}>Notes</label>
+          <textarea
+            value={data.notes}
+            onChange={(e) => update("notes", e.target.value)}
+            placeholder="Quick notes about this piece..."
+            rows={2}
+            style={{
+              width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`,
+              background: t.bgSecondary, color: t.text, fontFamily: "'DM Sans', sans-serif", fontSize: 13,
+              lineHeight: 1.5, resize: "vertical", outline: "none", boxSizing: "border-box",
+            }}
+          />
+        </div>
+
+        {/* Summary - truncated */}
+        {data.summary && (
+          <div style={{ padding: "12px 24px 0" }}>
+            <div style={{
+              padding: "8px 12px", borderRadius: 8, background: t.bgTertiary,
+              fontFamily: "'DM Sans', sans-serif", fontSize: 12, lineHeight: 1.5,
+              color: t.textMuted,
+            }}>
+              <span style={{ fontWeight: 600, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Summary: </span>
+              {cleanSummary(data.summary).slice(0, 150)}{cleanSummary(data.summary).length > 150 ? "..." : ""}
+            </div>
+          </div>
+        )}
 
         {/* Footer */}
         <div style={{
@@ -1056,6 +1058,101 @@ function CreativeVault() {
     try { localStorage.setItem("cv2_data", JSON.stringify(data)); } catch (e) {}
   }, [data]);
 
+  // Auto-sync: use refs so timers always have current values
+  const dirtyRef = useRef(false);
+  const syncTimeoutRef = useRef(null);
+  const safetyIntervalRef = useRef(null);
+  const dataRef = useRef(data);
+  const driveStatusRef = useRef(driveStatus);
+  const driveFileIdRef = useRef(driveFileId);
+
+  // Keep refs current
+  useEffect(() => { dataRef.current = data; }, [data]);
+  useEffect(() => { driveStatusRef.current = driveStatus; }, [driveStatus]);
+  useEffect(() => { driveFileIdRef.current = driveFileId; }, [driveFileId]);
+
+  const doAutoSync = async () => {
+    if (driveStatusRef.current !== "connected") return;
+    if (!window.gapi?.client?.drive) return;
+    try {
+      // Find or create file
+      let fileId = driveFileIdRef.current;
+      if (!fileId) {
+        const resp = await window.gapi.client.drive.files.list({
+          q: `name='${DRIVE_FILE_NAME}' and trashed=false`,
+          spaces: "drive",
+          fields: "files(id, name)",
+        });
+        if (resp.result.files?.length > 0) {
+          fileId = resp.result.files[0].id;
+        } else {
+          const createResp = await window.gapi.client.drive.files.create({
+            resource: { name: DRIVE_FILE_NAME, mimeType: "application/json" },
+            fields: "id",
+          });
+          fileId = createResp.result.id;
+        }
+        setDriveFileId(fileId);
+        driveFileIdRef.current = fileId;
+        saveSettings({ driveFileId: fileId });
+      }
+
+      const boundary = "cv2boundary";
+      const body = [
+        `--${boundary}`,
+        "Content-Type: application/json; charset=UTF-8",
+        "",
+        JSON.stringify({ name: DRIVE_FILE_NAME }),
+        `--${boundary}`,
+        "Content-Type: application/json",
+        "",
+        JSON.stringify(dataRef.current),
+        `--${boundary}--`,
+      ].join("\r\n");
+
+      await window.gapi.client.request({
+        path: `/upload/drive/v3/files/${fileId}`,
+        method: "PATCH",
+        params: { uploadType: "multipart" },
+        headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
+        body,
+      });
+      dirtyRef.current = false;
+      setSyncMessage("Auto-saved to Drive");
+      setTimeout(() => setSyncMessage(""), 2000);
+    } catch (e) {
+      console.error("Auto-sync error", e);
+    }
+  };
+
+  // Mark data as dirty when it changes (skip initial load)
+  const initialLoadRef = useRef(true);
+  useEffect(() => {
+    if (initialLoadRef.current) {
+      initialLoadRef.current = false;
+      return;
+    }
+    dirtyRef.current = true;
+
+    // Debounce: sync 30 seconds after last change
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+    syncTimeoutRef.current = setTimeout(() => {
+      if (dirtyRef.current) {
+        doAutoSync();
+      }
+    }, 30000);
+  }, [data]);
+
+  // 15-minute safety net
+  useEffect(() => {
+    safetyIntervalRef.current = setInterval(() => {
+      if (dirtyRef.current) {
+        doAutoSync();
+      }
+    }, 15 * 60 * 1000);
+    return () => { if (safetyIntervalRef.current) clearInterval(safetyIntervalRef.current); };
+  }, []);
+
   // Google Drive: load GIS + GAPI
   const tokenClientRef = useRef(null);
   const accessTokenRef = useRef(null);
@@ -1157,6 +1254,8 @@ function CreativeVault() {
         body,
       });
       setSyncMessage("Saved to Drive");
+      dirtyRef.current = false;
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
       setTimeout(() => setSyncMessage(""), 2000);
     } catch (e) {
       console.error("Sync error", e);
