@@ -1156,9 +1156,22 @@ function CreativeVault() {
   // Google Drive: load GIS + GAPI
   const tokenClientRef = useRef(null);
   const accessTokenRef = useRef(null);
+  const tokenExpiryRef = useRef(0);
 
   useEffect(() => {
     if (!driveClientId) return;
+
+    // Try to restore existing token from localStorage
+    try {
+      const stored = localStorage.getItem("cv2_auth");
+      if (stored) {
+        const { token, expiry } = JSON.parse(stored);
+        if (token && expiry && Date.now() < expiry) {
+          accessTokenRef.current = token;
+          tokenExpiryRef.current = expiry;
+        }
+      }
+    } catch (e) {}
 
     // Load GAPI for Drive API calls
     const gapiScript = document.createElement("script");
@@ -1169,6 +1182,11 @@ function CreativeVault() {
           await window.gapi.client.init({});
           await window.gapi.client.load("drive", "v3");
           setGapiReady(true);
+          // Restore token if we have a valid one
+          if (accessTokenRef.current && Date.now() < tokenExpiryRef.current) {
+            window.gapi.client.setToken({ access_token: accessTokenRef.current });
+            setDriveStatus("connected");
+          }
         } catch (e) {
           console.error("GAPI client init error", e);
         }
@@ -1186,6 +1204,15 @@ function CreativeVault() {
         callback: (response) => {
           if (response.access_token) {
             accessTokenRef.current = response.access_token;
+            // Google tokens last 1 hour; store expiry with 5min buffer
+            const expiry = Date.now() + (response.expires_in || 3600) * 1000 - 5 * 60 * 1000;
+            tokenExpiryRef.current = expiry;
+            try {
+              localStorage.setItem("cv2_auth", JSON.stringify({
+                token: response.access_token,
+                expiry,
+              }));
+            } catch (e) {}
             window.gapi.client.setToken({ access_token: response.access_token });
             setDriveStatus("connected");
             setSyncMessage("Connected to Google Drive");
@@ -1193,9 +1220,32 @@ function CreativeVault() {
           }
         },
       });
+
+      // Try silent refresh on load if we don't have a valid token
+      if (!accessTokenRef.current || Date.now() >= tokenExpiryRef.current) {
+        try {
+          tokenClientRef.current.requestAccessToken({ prompt: "" });
+        } catch (e) {
+          // Silent refresh failed - user will need to click Sign In
+        }
+      }
     };
     document.body.appendChild(gisScript);
   }, [driveClientId]);
+
+  // Auto-refresh token before expiry
+  useEffect(() => {
+    if (driveStatus !== "connected") return;
+    const interval = setInterval(() => {
+      if (Date.now() >= tokenExpiryRef.current - 60 * 1000) {
+        // Token expiring in next minute - refresh silently
+        if (tokenClientRef.current) {
+          try { tokenClientRef.current.requestAccessToken({ prompt: "" }); } catch (e) {}
+        }
+      }
+    }, 60 * 1000); // check every minute
+    return () => clearInterval(interval);
+  }, [driveStatus]);
 
   const driveSignIn = () => {
     if (tokenClientRef.current) {
