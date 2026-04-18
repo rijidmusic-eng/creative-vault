@@ -74,7 +74,7 @@ const cleanSummary = (s) => {
     .replace(/\bthe user\b/g, "David");
 };
 
-const STAGES = ["Seed", "Draft", "Rev 1", "Rev 2", "Rev 3", "Rev 4", "Rev 5", "Rev 6", "Rev 7", "Rev 8", "Rev 9", "Rev 10", "Done"];
+const STAGES = ["Seed", "Draft", "Done"];
 
 // ─── Fonts ────────────────────────────────────────────────────────────
 const fontLink = document.createElement("link");
@@ -1158,6 +1158,35 @@ function CreativeVault() {
   const accessTokenRef = useRef(null);
   const tokenExpiryRef = useRef(0);
 
+  const autoLoadFromDrive = async () => {
+    try {
+      // Find the file
+      const resp = await window.gapi.client.drive.files.list({
+        q: `name='${DRIVE_FILE_NAME}' and trashed=false`,
+        spaces: "drive",
+        fields: "files(id, name)",
+      });
+      if (resp.result.files?.length > 0) {
+        const fileId = resp.result.files[0].id;
+        setDriveFileId(fileId);
+        driveFileIdRef.current = fileId;
+        saveSettings({ driveFileId: fileId });
+        const fileResp = await window.gapi.client.drive.files.get({
+          fileId,
+          alt: "media",
+        });
+        if (fileResp.result?.entries) {
+          setData(fileResp.result);
+          initialLoadRef.current = true; // prevent auto-sync from triggering on load
+          setSyncMessage("Loaded from Drive");
+          setTimeout(() => setSyncMessage(""), 2000);
+        }
+      }
+    } catch (e) {
+      console.error("Auto-load from Drive error", e);
+    }
+  };
+
   useEffect(() => {
     if (!driveClientId) return;
 
@@ -1186,6 +1215,8 @@ function CreativeVault() {
           if (accessTokenRef.current && Date.now() < tokenExpiryRef.current) {
             window.gapi.client.setToken({ access_token: accessTokenRef.current });
             setDriveStatus("connected");
+            // Auto-load from Drive on page open
+            autoLoadFromDrive();
           }
         } catch (e) {
           console.error("GAPI client init error", e);
@@ -1217,6 +1248,8 @@ function CreativeVault() {
             setDriveStatus("connected");
             setSyncMessage("Connected to Google Drive");
             setTimeout(() => setSyncMessage(""), 2000);
+            // Auto-load from Drive after sign-in
+            autoLoadFromDrive();
           }
         },
       });
